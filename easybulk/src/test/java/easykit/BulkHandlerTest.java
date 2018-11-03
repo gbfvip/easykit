@@ -21,10 +21,7 @@ public class BulkHandlerTest {
     @Test
     public void testMaxWaitTimeFlush() {
         bulkHandler = BulkHandler.builder().setBulkActions(100)
-                .setOperation(new Consumer<Collection<String>>() {
-                    @Override
-                    public void accept(Collection<String> strings) {
-                    }
+                .setOperation((Consumer<Collection<String>>) strings -> {
                 })
                 .setListener(new BulkHandler.Listener<String>() {
                     @Override
@@ -63,10 +60,7 @@ public class BulkHandlerTest {
     @Test
     public void testMaxCapacityFlush() {
         bulkHandler = BulkHandler.builder().setBulkActions(2000)
-                .setOperation(new Consumer<Collection<String>>() {
-                    @Override
-                    public void accept(Collection<String> strings) {
-                    }
+                .setOperation((Consumer<Collection<String>>) strings -> {
                 })
                 .setListener(new BulkHandler.Listener<String>() {
                     @Override
@@ -100,11 +94,8 @@ public class BulkHandlerTest {
     @Test
     public void testRetry() {
         bulkHandler = BulkHandler.builder().setBulkActions(1)
-                .setOperation(new Consumer<Collection<String>>() {
-                    @Override
-                    public void accept(Collection<String> strings) {
-                        throw new RuntimeException("test exception");
-                    }
+                .setOperation((Consumer<Collection<String>>) strings -> {
+                    throw new RuntimeException("test exception");
                 })
                 .setListener(new BulkHandler.Listener<String>() {
                     @Override
