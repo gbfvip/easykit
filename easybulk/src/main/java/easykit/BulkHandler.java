@@ -10,8 +10,10 @@ public class BulkHandler<T> {
     private final int bulkActions;
     private final ScheduledThreadPoolExecutor scheduler;
     private final ScheduledFuture<?> scheduledFuture;
-    private final LinkedBlockingQueue<T> footprints;
+    private final ExecutorService processor;
+    private final LinkedBlockingQueue<T> items;
     private final int maxRetryNum;
+    private final int concurrentLevel;
 
     private Consumer<Collection<T>> operation;
     private Listener<T> listener;
@@ -44,6 +46,7 @@ public class BulkHandler<T> {
         private int bulkActions = 1000;//default max 1000 records/flush
         private long flushInterval = TimeUnit.MILLISECONDS.toMillis(100);//default max 100ms/flush
         private int maxRetryNum;
+        private int concurrentLevel;
 
         public Builder setListener(Listener listener) {
             this.listener = listener;
@@ -70,11 +73,16 @@ public class BulkHandler<T> {
             return this;
         }
 
+        public Builder setConcurrentLevel(int concurrentLevel) {
+            this.concurrentLevel = concurrentLevel;
+            return this;
+        }
+
         /**
          * Builds a new bulk processor.
          */
-        public <Value> BulkHandler<Value> build() {
-            return new BulkHandler<Value>(operation, listener, bulkActions, flushInterval, maxRetryNum);
+        public <T> BulkHandler<T> build() {
+            return new BulkHandler<T>(operation, listener, bulkActions, flushInterval, maxRetryNum, concurrentLevel);
         }
     }
 
@@ -82,18 +90,21 @@ public class BulkHandler<T> {
         return new Builder();
     }
 
-    private BulkHandler(Consumer<Collection<T>> operation, Listener<T> listener, int bulkActions, long flushInterval, int maxRetryNum) {
+    private BulkHandler(Consumer<Collection<T>> operation, Listener<T> listener, int bulkActions, long flushInterval, int maxRetryNum, int concurrentLevel) {
         this.bulkActions = bulkActions;
 
         this.operation = operation;
         this.listener = listener;
-        this.footprints = new LinkedBlockingQueue<T>();
+        this.items = new LinkedBlockingQueue<>();
         this.maxRetryNum = maxRetryNum;
+        this.concurrentLevel = concurrentLevel;
 
         this.scheduler = (ScheduledThreadPoolExecutor) Executors.newScheduledThreadPool(1);
         this.scheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
         this.scheduler.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
         this.scheduledFuture = this.scheduler.scheduleWithFixedDelay(new Flush(), flushInterval, flushInterval, TimeUnit.MILLISECONDS);
+
+        this.processor = Executors.newWorkStealingPool(concurrentLevel);
     }
 
     public void close() {
@@ -115,7 +126,7 @@ public class BulkHandler<T> {
                 this.scheduler.shutdownNow();
             }
         }
-        if (footprints.size() > 0) {
+        if (items.size() > 0) {
             execute();
         }
     }
@@ -133,7 +144,7 @@ public class BulkHandler<T> {
 
     private synchronized void internalAdd(T request) {
         ensureOpen();
-        footprints.add(request);
+        items.add(request);
         executeIfNeeded();
     }
 
@@ -142,13 +153,21 @@ public class BulkHandler<T> {
         if (!isOverTheLimit()) {
             return;
         }
-        execute();
+
+        Future future = processor.submit((Runnable) this::execute);
+        if (concurrentLevel == 1) {
+            try {
+                future.get();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private void execute() {
         int retry = 0;
         List<T> bulkRecords = new ArrayList<>();
-        this.footprints.drainTo(bulkRecords);
+        this.items.drainTo(bulkRecords);
         boolean needRetry = execute(bulkRecords);
         while (needRetry && retry++ < this.maxRetryNum) {
             needRetry = execute(bulkRecords);
@@ -173,7 +192,7 @@ public class BulkHandler<T> {
     }
 
     private boolean isOverTheLimit() {
-        return bulkActions != -1 && footprints.size() >= bulkActions;
+        return bulkActions != -1 && items.size() >= bulkActions;
     }
 
     class Flush implements Runnable {
@@ -184,7 +203,7 @@ public class BulkHandler<T> {
                 if (closed) {
                     return;
                 }
-                if (footprints.isEmpty()) {
+                if (items.isEmpty()) {
                     return;
                 }
                 execute();
