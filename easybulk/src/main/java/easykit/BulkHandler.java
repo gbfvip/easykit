@@ -104,9 +104,7 @@ public class BulkHandler<T> {
         this.scheduler.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
         this.scheduledFuture = this.scheduler.scheduleWithFixedDelay(new Flush(), flushInterval, flushInterval, TimeUnit.MILLISECONDS);
 
-        this.processor = new ThreadPoolExecutor(1, concurrentLevel,
-                5L, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<Runnable>(10));
+        this.processor = new ThreadPoolExecutor(1, concurrentLevel, 5L, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(10));
     }
 
     public void close() {
